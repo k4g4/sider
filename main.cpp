@@ -1,5 +1,4 @@
 #include <netinet/in.h>
-#include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -10,7 +9,7 @@ const size_t BUF_LEN = 1024;
 
 class Server {
   int sock;
-  struct sockaddr_in addr;
+  sockaddr_in addr;
 
 public:
   Server()
@@ -27,7 +26,7 @@ public:
                    sizeof(opt))) {
       throw std::runtime_error("failed to set socket options");
     }
-    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr))) {
+    if (bind(sock, (sockaddr *)&addr, sizeof(addr))) {
       throw std::runtime_error("failed to bind socket");
     }
     if (listen(sock, 1)) {
@@ -53,11 +52,15 @@ public:
     int bytes_read;
     std::string buf(BUF_LEN, '\0');
     while (true) {
-      if (0 >= (bytes_read = read(client_sock, &buf.front(), BUF_LEN))) {
+      if (0 > (bytes_read = read(client_sock, &buf.front(), BUF_LEN))) {
         close(client_sock);
         throw std::runtime_error("failed to read from connection");
       }
+      if (!bytes_read) {
+        return;
+      }
       std::cout << "read " << bytes_read << " bytes: " << buf << std::endl;
+      buf.assign(BUF_LEN, '\0');
     }
   }
 };
