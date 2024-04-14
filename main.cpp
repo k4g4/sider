@@ -1,11 +1,13 @@
+#include "shared.h"
+#include <algorithm>
+#include <iostream>
 #include <netinet/in.h>
+#include <string.h>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 
-#include <iostream>
-
-const uint16_t PORT = 9999;
-const size_t BUF_LEN = 1024;
+const size_t PEERS_LEN = 10;
 
 class Server {
   int sock;
@@ -29,7 +31,7 @@ public:
     if (bind(sock, (sockaddr *)&addr, sizeof(addr))) {
       throw std::runtime_error("failed to bind socket");
     }
-    if (listen(sock, 1)) {
+    if (listen(sock, PEERS_LEN)) {
       throw std::runtime_error("failed to prepare socket");
     }
   }
@@ -43,25 +45,30 @@ public:
       if (0 > (client_sock = accept(sock, nullptr, nullptr))) {
         throw std::runtime_error("failed to accept connection");
       }
-      handle_conn(client_sock);
-      close(client_sock);
+      std::thread(&Server::handle_conn, this, client_sock).detach();
     }
   }
 
   void handle_conn(int client_sock) {
     int bytes_read;
-    std::string buf(BUF_LEN, '\0');
-    while (true) {
-      if (0 > (bytes_read = read(client_sock, &buf.front(), BUF_LEN))) {
+    buffer buf{};
+
+    while (0 < (bytes_read = read(client_sock, buf.data(), buf.size()))) {
+      std::cout << "read: " << buf.data() << std::endl;
+      transact(buf);
+      std::cout << "writing: " << buf.data() << std::endl;
+
+      if (0 > send(client_sock, buf.data(), buf.size(), 0)) {
         close(client_sock);
-        throw std::runtime_error("failed to read from connection");
+        throw std::runtime_error("failed to send data to client");
       }
-      if (!bytes_read) {
-        return;
-      }
-      std::cout << "read " << bytes_read << " bytes: " << buf << std::endl;
-      buf.assign(BUF_LEN, '\0');
     }
+
+    close(client_sock);
+  }
+
+  void transact(buffer &buf) {
+    std::reverse(buf.begin(), buf.begin() + strlen(buf.data()));
   }
 };
 
