@@ -7,7 +7,7 @@
 #include <thread>
 #include <unistd.h>
 
-const size_t PEERS_LEN = 10;
+const size_t BACKLOG = 10;
 
 class Server {
   int sock;
@@ -31,7 +31,7 @@ public:
     if (bind(sock, (sockaddr *)&addr, sizeof(addr))) {
       throw std::runtime_error("failed to bind socket");
     }
-    if (listen(sock, PEERS_LEN)) {
+    if (listen(sock, BACKLOG)) {
       throw std::runtime_error("failed to prepare socket");
     }
   }
@@ -82,7 +82,7 @@ int main() {
     std::cout << "listening..." << std::endl;
     server.accept_loop();
   } catch (std::runtime_error const &e) {
-    std::cout << "error: " << e.what() << std::endl;
+    std::cerr << "error: " << e.what() << std::endl;
   }
 
   return 0;

@@ -63,7 +63,7 @@ int main() {
     Client client;
     client.handle_conn();
   } catch (std::runtime_error const &e) {
-    std::cout << "error: " << e.what() << std::endl;
+    std::cerr << "error: " << e.what() << std::endl;
   }
 
   return 0;
