@@ -56,7 +56,7 @@ public:
       std::cout << "read: " << in.data() << std::endl;
       transact(in, out, out_len);
       std::cout << "writing: " << out.data() << std::endl;
-      if (0 > send(client_sock, out.data(), out.size(), 0)) {
+      if (0 > send(client_sock, out.data(), out_len, 0)) {
         close(client_sock);
         throw std::runtime_error("failed to send data to client");
       }
