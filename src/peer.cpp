@@ -35,17 +35,24 @@ public:
 
     buffer in{}, out{};
 
-    strncpy(out.data(), "PING", out.size());
+    read_command(out);
     std::cout << "writing: " << out.data() << std::endl;
     if (0 > send(sock, out.data(), out.size(), 0)) {
       throw std::runtime_error("failed to send data");
     }
 
-    if (0 > read(sock, in.data(), in.size())) {
-      throw std::runtime_error("failed to read data");
+    while (0 < read(sock, in.data(), in.size())) {
+      std::cout << "read:\n" << in.data() << std::endl;
+      read_command(out);
+      std::cout << "writing:\n" << out.data() << std::endl;
+
+      if (0 > send(sock, out.data(), out.size(), 0)) {
+        throw std::runtime_error("failed to send data");
+      }
     }
-    std::cout << "read: " << in.data() << std::endl;
   }
+
+  void read_command(buffer &out) { strncpy(out.data(), "PING", out.size()); }
 };
 
 int main() {

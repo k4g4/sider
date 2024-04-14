@@ -53,9 +53,10 @@ public:
     buffer in{}, out{};
 
     while (0 < read(client_sock, in.data(), in.size())) {
-      std::cout << "read: " << in.data() << std::endl;
+      std::cout << "read:\n" << in.data() << std::endl;
       transact(in, out, out_len);
-      std::cout << "writing: " << out.data() << std::endl;
+      std::cout << "writing:\n" << out.data() << std::endl;
+
       if (0 > send(client_sock, out.data(), out_len, 0)) {
         close(client_sock);
         throw std::runtime_error("failed to send data to client");
