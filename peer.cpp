@@ -33,20 +33,25 @@ public:
       throw std::runtime_error("failed to connect");
     }
 
-    auto msg = "Hello!";
-    if (0 > send(sock, msg, strlen(msg), 0)) {
+    buffer in{}, out{};
+
+    strncpy(out.data(), "Hello!", out.size());
+    std::cout << "writing: " << out.data() << std::endl;
+    if (0 > send(sock, out.data(), out.size(), 0)) {
       throw std::runtime_error("failed to send data");
     }
 
     int bytes_read;
-    buffer buf{};
-    while (0 < (bytes_read = read(sock, buf.data(), buf.size()))) {
-      std::cout << "read: " << buf.data() << std::endl;
+    while (0 < (bytes_read = read(sock, in.data(), in.size()))) {
+      std::cout << "read: " << in.data() << std::endl;
+      if (0 == strncmp("Bye!", in.data(), in.size())) {
+        break;
+      }
 
-      auto msg = "Hello!";
-      std::cout << "writing: " << msg << std::endl;
+      strncpy(out.data(), "Goodbye!", out.size());
+      std::cout << "writing: " << out.data() << std::endl;
 
-      if (0 > send(sock, msg, strlen(msg), 0)) {
+      if (0 > send(sock, out.data(), out.size(), 0)) {
         throw std::runtime_error("failed to send data");
       }
     }

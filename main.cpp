@@ -51,14 +51,14 @@ public:
 
   void handle_conn(int client_sock) {
     int bytes_read;
-    buffer buf{};
+    buffer in{}, out{};
 
-    while (0 < (bytes_read = read(client_sock, buf.data(), buf.size()))) {
-      std::cout << "read: " << buf.data() << std::endl;
-      transact(buf);
-      std::cout << "writing: " << buf.data() << std::endl;
+    while (0 < (bytes_read = read(client_sock, in.data(), in.size()))) {
+      std::cout << "read: " << in.data() << std::endl;
+      transact(in, out);
+      std::cout << "writing: " << out.data() << std::endl;
 
-      if (0 > send(client_sock, buf.data(), buf.size(), 0)) {
+      if (0 > send(client_sock, out.data(), out.size(), 0)) {
         close(client_sock);
         throw std::runtime_error("failed to send data to client");
       }
@@ -67,8 +67,12 @@ public:
     close(client_sock);
   }
 
-  void transact(buffer &buf) {
-    std::reverse(buf.begin(), buf.begin() + strlen(buf.data()));
+  void transact(buffer const &in, buffer &out) {
+    if (0 == strncmp("Hello!", in.data(), in.size())) {
+      strncpy(out.data(), "Hi!", out.size());
+    } else {
+      strncpy(out.data(), "Bye!", out.size());
+    }
   }
 };
 
