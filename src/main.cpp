@@ -1,5 +1,4 @@
 #include "shared.h"
-#include <algorithm>
 #include <iostream>
 #include <netinet/in.h>
 #include <string.h>
@@ -57,7 +56,6 @@ public:
       std::cout << "read: " << in.data() << std::endl;
       transact(in, out);
       std::cout << "writing: " << out.data() << std::endl;
-
       if (0 > send(client_sock, out.data(), out.size(), 0)) {
         close(client_sock);
         throw std::runtime_error("failed to send data to client");
@@ -68,10 +66,10 @@ public:
   }
 
   void transact(buffer const &in, buffer &out) {
-    if (0 == strncmp("Hello!", in.data(), in.size())) {
-      strncpy(out.data(), "Hi!", out.size());
+    if (true || 0 == strncmp("PING", in.data(), in.size())) {
+      strncpy(out.data(), "+PONG\r\n", out.size());
     } else {
-      strncpy(out.data(), "Bye!", out.size());
+      strncpy(out.data(), "unknown command", out.size());
     }
   }
 };
