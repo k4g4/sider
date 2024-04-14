@@ -49,12 +49,12 @@ public:
   }
 
   void handle_conn(int client_sock) {
-    int bytes_read;
+    int out_len;
     buffer in{}, out{};
 
-    while (0 < (bytes_read = read(client_sock, in.data(), in.size()))) {
+    while (0 < read(client_sock, in.data(), in.size())) {
       std::cout << "read: " << in.data() << std::endl;
-      transact(in, out);
+      transact(in, out, out_len);
       std::cout << "writing: " << out.data() << std::endl;
       if (0 > send(client_sock, out.data(), out.size(), 0)) {
         close(client_sock);
@@ -65,12 +65,10 @@ public:
     close(client_sock);
   }
 
-  void transact(buffer const &in, buffer &out) {
-    if (true || 0 == strncmp("PING", in.data(), in.size())) {
-      strncpy(out.data(), "+PONG\r\n", out.size());
-    } else {
-      strncpy(out.data(), "unknown command", out.size());
-    }
+  void transact(buffer const &in, buffer &out, int &out_len) {
+    auto response = "+PONG\r\n";
+    strncpy(out.data(), response, out.size());
+    out_len = strlen(response);
   }
 };
 
