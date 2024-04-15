@@ -1,10 +1,12 @@
-#include "shared.h"
-#include <iostream>
 #include <netinet/in.h>
-#include <string.h>
 #include <sys/socket.h>
-#include <thread>
 #include <unistd.h>
+
+#include <iostream>
+#include <thread>
+
+#include "protocol.h"
+#include "shared.h"
 
 const size_t BACKLOG = 10;
 
@@ -12,7 +14,7 @@ class Server {
   int sock;
   sockaddr_in addr;
 
-public:
+ public:
   Server()
       : addr{
             .sin_family = AF_INET,
@@ -44,6 +46,7 @@ public:
       if (0 > (client_sock = accept(sock, nullptr, nullptr))) {
         throw std::runtime_error("failed to accept connection");
       }
+      // using threads, could optimize with an event loop
       std::thread(&Server::handle_conn, this, client_sock).detach();
     }
   }
@@ -64,12 +67,6 @@ public:
     }
 
     close(client_sock);
-  }
-
-  void transact(buffer const &in, buffer &out, int &out_len) {
-    auto response = "+PONG\r\n";
-    strncpy(out.data(), response, out.size());
-    out_len = strlen(response);
   }
 };
 

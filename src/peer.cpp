@@ -1,9 +1,11 @@
-#include "shared.h"
 #include <arpa/inet.h>
-#include <iostream>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <iostream>
+
+#include "shared.h"
 
 const char *ADDR = "127.0.0.1";
 
@@ -11,7 +13,7 @@ class Client {
   int sock;
   struct sockaddr_in addr;
 
-public:
+ public:
   Client()
       : addr{
             .sin_family = AF_INET,

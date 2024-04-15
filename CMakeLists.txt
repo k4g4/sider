@@ -4,7 +4,7 @@ project(sider)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-set(SERVER_SOURCE_FILES src/main.cpp)
+set(SERVER_SOURCE_FILES src/main.cpp src/protocol.cpp)
 set(CLIENT_SOURCE_FILES src/peer.cpp)
 
 add_executable(server ${SERVER_SOURCE_FILES})
