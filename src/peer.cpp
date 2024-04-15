@@ -5,6 +5,7 @@
 
 #include <iostream>
 
+#include "protocol.h"
 #include "shared.h"
 
 const char *ADDR = "127.0.0.1";
@@ -45,6 +46,9 @@ class Client {
 
     while (0 < read(sock, in.data(), in.size())) {
       std::cout << "read:\n" << in.data() << std::endl;
+      auto response = client_parse(in);
+      std::cout << "response:\n" << response << std::endl;
+
       read_command(out);
       std::cout << "writing:\n" << out.data() << std::endl;
 

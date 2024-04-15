@@ -52,15 +52,15 @@ class Server {
   }
 
   void handle_conn(int client_sock) {
-    int out_len;
+    size_t out_size;
     buffer in{}, out{};
 
     while (0 < read(client_sock, in.data(), in.size())) {
       std::cout << "read:\n" << in.data() << std::endl;
-      transact(in, out, out_len);
+      server_transact(in, out, out_size);
       std::cout << "writing:\n" << out.data() << std::endl;
 
-      if (0 > send(client_sock, out.data(), out_len, 0)) {
+      if (0 > send(client_sock, out.data(), out_size, 0)) {
         close(client_sock);
         throw std::runtime_error("failed to send data to client");
       }
