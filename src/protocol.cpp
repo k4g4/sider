@@ -4,6 +4,7 @@
 #include <iostream>
 #include <numeric>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -21,19 +22,19 @@
 
 STRING_NEWTYPE(SimpleString);
 
-std::ostream &operator<<(std::ostream &os, const SimpleString &simple_string) {
+std::ostream &operator<<(std::ostream &os, SimpleString const &simple_string) {
   return os << '+' << simple_string.view() << "\r\n";
 }
 
 STRING_NEWTYPE(SimpleError);
 
-std::ostream &operator<<(std::ostream &os, const SimpleError &simple_error) {
+std::ostream &operator<<(std::ostream &os, SimpleError const &simple_error) {
   return os << '-' << simple_error.view() << "\r\n";
 }
 
 STRING_NEWTYPE(BulkString);
 
-std::ostream &operator<<(std::ostream &os, const BulkString &bulk_string) {
+std::ostream &operator<<(std::ostream &os, BulkString const &bulk_string) {
   return os << '$' << bulk_string.view().length() << "\r\n"
             << bulk_string.view() << "\r\n";
 }
@@ -95,6 +96,8 @@ struct Echo {
   BulkString msg;
 
   Echo(BulkString &&msg) : msg(std::move(msg)) {}
+
+  void visit(std::ostream &os) const { os << msg; }
 };
 
 struct Ping {
@@ -102,9 +105,28 @@ struct Ping {
 
   Ping() : msg(std::nullopt) {}
   Ping(BulkString &&msg) : msg(std::move(msg)) {}
+
+  void visit(std::ostream &os) const {
+    if (msg) {
+      os << *msg;
+    } else {
+      os << SimpleString("PONG");
+    }
+  }
 };
 
 using Command = std::variant<Ping, Echo>;
+
+struct Visitor {
+  std::ostream &os;
+
+  Visitor(std::ostream &os) : os(os) {}
+
+  template <typename Command>
+  void operator()(Command const &command) {
+    command.visit(os);
+  }
+};
 
 }  // namespace commands
 
@@ -408,11 +430,21 @@ Result<commands::Command> parse_command(std::string_view data) {
 
 };  // namespace parsers
 
-void server_transact(buffer const &in, buffer &out, size_t &out_len) {
+void server_transact(buffer const &in, std::string &out) {
   auto res = parsers::parse_command(in.begin());
+  std::ostringstream oss(std::move(out), std::ios_base::trunc);
+
   if (res) {
     auto [_, command] = std::move(*res);
+    commands::Visitor visitor(oss);
+
+    std::visit(visitor, command);
+
+  } else {
+    oss << SimpleError("server error");
   }
+
+  out = std::move(oss.str());
 }
 
 std::string client_parse(buffer const &in) { return ""; }
