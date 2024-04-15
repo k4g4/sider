@@ -1,6 +1,7 @@
 #include "protocol.h"
 
 #include <algorithm>
+#include <iostream>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -8,17 +9,39 @@
 #include <variant>
 #include <vector>
 
-struct BulkString {
-  std::string inner;
+#define STRING_NEWTYPE(name)                                 \
+  struct name {                                              \
+    std::string inner;                                       \
+    /* remove ability to copy */                             \
+    name() = delete;                                         \
+    name(name &&other) = default;                            \
+    name(std::string &&string) : inner(std::move(string)) {} \
+    std::string_view view() const { return inner; }          \
+  }
 
-  // remove ability to copy
-  BulkString() = delete;
-  BulkString(BulkString &&other) = default;
-  BulkString(std::string &&string) : inner(std::move(string)) {}
-};
+STRING_NEWTYPE(SimpleString);
+
+std::ostream &operator<<(std::ostream &os, const SimpleString &simple_string) {
+  return os << '+' << simple_string.view() << "\r\n";
+}
+
+STRING_NEWTYPE(SimpleError);
+
+std::ostream &operator<<(std::ostream &os, const SimpleError &simple_error) {
+  return os << '-' << simple_error.view() << "\r\n";
+}
+
+STRING_NEWTYPE(BulkString);
+
+std::ostream &operator<<(std::ostream &os, const BulkString &bulk_string) {
+  return os << '$' << bulk_string.view().length() << "\r\n"
+            << bulk_string.view() << "\r\n";
+}
 
 class Element {
-  using ElemVars = std::variant<std::string, BulkString, std::vector<Element>>;
+  using ElemVars = std::variant<SimpleString, SimpleError, int64_t,
+                                std::optional<BulkString>, std::vector<Element>,
+                                std::nullptr_t>;
   ElemVars inner;
 
   Element(ElemVars &&inner) : inner(std::move(inner)) {}
@@ -26,8 +49,14 @@ class Element {
   // only possible to construct element from factories that move values out
  public:
   static Element simple_string(std::string &&string) {
-    return Element(ElemVars(std::move(string)));
+    return Element(ElemVars(SimpleString(std::move(string))));
   }
+
+  static Element simple_error(std::string &&string) {
+    return Element(ElemVars(SimpleError(std::move(string))));
+  }
+
+  static Element null_bulk_string() { return Element(ElemVars(std::nullopt)); }
 
   static Element bulk_string(std::string &&string) {
     return Element(ElemVars(BulkString(std::move(string))));
@@ -36,9 +65,31 @@ class Element {
   static Element array(std::vector<Element> &&array) {
     return Element(ElemVars(std::move(array)));
   }
+
+  static Element integer(int64_t integer) { return Element(ElemVars(integer)); }
+
+  static Element null() { return Element(ElemVars(nullptr)); }
+
+  auto &&get_simple_string() {
+    return std::get<SimpleString>(std::move(inner));
+  }
+
+  auto &&get_simple_error() { return std::get<SimpleError>(std::move(inner)); }
+
+  auto &&get_bulk_string() {
+    return std::get<std::optional<BulkString>>(std::move(inner));
+  }
+
+  auto &&get_array() {
+    return std::get<std::vector<Element>>(std::move(inner));
+  }
+
+  auto get_integer() const { return std::get<int64_t>(inner); }
+
+  operator bool() const { return std::holds_alternative<nullptr_t>(inner); }
 };
 
-// Commands
+namespace commands {
 
 struct Echo {
   BulkString msg;
@@ -55,17 +106,22 @@ struct Ping {
 
 using Command = std::variant<Ping, Echo>;
 
-// parser combinators use std::optional as monad
+}  // namespace commands
+
 namespace parsers {
 
 template <typename T>
 using Result = std::optional<std::pair<std::string_view, T>>;
 
+template <typename T>
+Result<T> result(std::string_view data, T &&t) {
+  return std::make_optional(std::make_pair(data, std::move(t)));
+}
+
 auto tag(std::string_view tag) {
   return [=](std::string_view data) -> Result<std::string_view> {
     return data.starts_with(tag)
-               ? std::make_optional(std::make_pair(
-                     data.substr(tag.length()), data.substr(0, tag.length())))
+               ? result(data.substr(tag.length()), data.substr(0, tag.length()))
                : std::nullopt;
   };
 }
@@ -76,13 +132,15 @@ Result<std::string_view> crlf(std::string_view data) {
 
 auto one_of(std::string_view one_of) {
   return [=](std::string_view data) -> Result<char> {
-    if (data.empty()) return std::nullopt;
-    auto iter = std::find_if(one_of.begin(), one_of.end(),
-                             [=](char c) { return data.front() == c; });
+    if (!data.empty()) {
+      auto iter = std::find_if(one_of.begin(), one_of.end(),
+                               [=](char c) { return data.front() == c; });
 
-    return iter != one_of.end()
-               ? std::make_optional(std::make_pair(data.substr(1), *iter))
-               : std::nullopt;
+      return iter != one_of.end() ? result(data.substr(1), *iter)
+                                  : std::nullopt;
+    }
+
+    return std::nullopt;
   };
 }
 
@@ -91,8 +149,10 @@ auto alt(Parsers... parsers) {
   return [=](std::string_view data) -> decltype(std::get<0>(
                                         make_tuple(parsers...))("")) {
     for (auto parser : {parsers...}) {
-      auto result = parser(data);
-      if (result) return result;
+      auto res = parser(data);
+      if (res) {
+        return res;
+      }
     }
 
     return std::nullopt;
@@ -102,116 +162,257 @@ auto alt(Parsers... parsers) {
 template <typename Parser1, typename Parser2>
 auto then(Parser1 parser1, Parser2 parser2) {
   return [=](std::string_view data) -> decltype(parser2("")) {
-    auto result = parser1(data);
-    if (!result) return std::nullopt;
-    auto [data2, _] = *result;
+    auto res = parser1(data);
+    if (res) {
+      auto [data2, _] = *res;
 
-    return parser2(data2);
+      return parser2(data2);
+    }
+
+    return std::nullopt;
   };
 }
 
-Result<size_t> size(std::string_view data) {
+Result<size_t> number(std::string_view data) {
   auto end = std::find_if_not(data.begin(), data.end(),
                               [](char c) { return c >= '0' && c <= '9'; });
-  if (end == data.begin()) return std::nullopt;
+  if (end != data.begin()) {
+    size_t size = std::accumulate(data.begin(), end, 0, [](size_t acc, char c) {
+      return acc * 10 + (c - '0');
+    });
 
-  size_t size = std::accumulate(data.begin(), end, 0, [](size_t acc, char c) {
-    return acc * 10 + (c - '0');
-  });
+    return result(data.substr(end - data.begin()), std::move(size));
+  }
 
-  return std::make_optional(
-      std::make_pair(data.substr(end - data.begin()), size));
+  return std::nullopt;
 }
 
 auto take_until(std::string_view until) {
   return [=](std::string_view data) {
     auto at = data.find(until);
-    return at != data.npos ? std::make_optional(std::make_pair(
-                                 data.substr(at), data.substr(0, at)))
+
+    return at != data.npos ? result(data.substr(at), data.substr(0, at))
                            : std::nullopt;
   };
 }
 
 Result<Element> simple_string(std::string_view data) {
-  auto result = tag("+")(data);
-  if (!result) return std::nullopt;
-  auto [data2, _] = *result;
+  auto res = tag("+")(data);
 
-  auto result2 = take_until("\r\n")(data2);
-  if (!result2) return std::nullopt;
-  auto [data3, string] = *result2;
+  if (res) {
+    auto [data, _] = *res;
 
-  auto result3 = crlf(data3);
-  if (!result3) return std::nullopt;
-  auto [data4, __] = *result3;
+    if (res = take_until("\r\n")(data)) {
+      auto [data, string] = *res;
 
-  return std::make_optional(
-      std::make_pair(data4, Element::simple_string(std::string(string))));
+      if (res = crlf(data)) {
+        auto [data, __] = *res;
+
+        return result(data, Element::simple_string(std::string(string)));
+      }
+    }
+  }
+
+  return std::nullopt;
+}
+
+Result<Element> simple_error(std::string_view data) {
+  auto res = tag("-")(data);
+
+  if (res) {
+    auto [data, _] = *res;
+
+    if (res = take_until("\r\n")(data)) {
+      auto [data, string] = *res;
+
+      if (res = crlf(data)) {
+        auto [data, _] = *res;
+
+        return result(data, Element::simple_error(std::string(string)));
+      }
+    }
+  }
+
+  return std::nullopt;
+}
+
+Result<Element> integer(std::string_view data) {
+  auto res = tag(":")(data);
+
+  if (res) {
+    auto [data, _] = *res;
+    auto res = one_of("+-")(data);
+
+    if (res) {
+      auto [data, sign] = *res;
+      auto res = number(data);
+
+      if (res) {
+        auto [data, number] = *res;
+
+        auto res = crlf(data);
+        if (res) {
+          auto [data, _] = *res;
+          int64_t integer = sign == '+' ? number : -(int64_t)number;
+
+          return result(data, Element::integer(integer));
+        }
+      }
+    }
+  }
+
+  return std::nullopt;
 }
 
 Result<Element> bulk_string(std::string_view data) {
-  auto result = then(tag("$"), size)(data);
-  if (!result) return std::nullopt;
-  auto [data2, size] = *result;
+  auto res = then(tag("$"), number)(data);
 
-  auto result2 = crlf(data2);
-  if (!result2) return std::nullopt;
-  auto [data3, _] = *result2;
+  if (res) {
+    auto [data, size] = *res;
+    auto res = then(tag("-1"), crlf)(data);
 
-  if (data3.length() < size) return std::nullopt;
-  auto string = data3.substr(0, size);
-  auto data4 = data3.substr(size);
+    if (res) {
+      auto [data, _] = *res;
 
-  auto result3 = crlf(data4);
-  if (!result3) return std::nullopt;
-  auto [data5, __] = *result3;
+      return result(data, Element::null_bulk_string());
+    }
 
-  return std::make_optional(
-      std::make_pair(data5, Element::bulk_string(std::string(string))));
+    if (res = crlf(data)) {
+      auto [data, _] = *res;
+
+      if (data.length() >= size) {
+        auto string = data.substr(0, size);
+        data = data.substr(size);
+
+        if (res = crlf(data)) {
+          auto [data, __] = *res;
+
+          return result(data, Element::bulk_string(std::string(string)));
+        }
+      }
+    }
+  }
+
+  return std::nullopt;
 }
 
 Result<Element> element(std::string_view data);
 
 Result<Element> array(std::string_view data) {
-  auto result = then(tag("*"), size)(data);
-  if (!result) return std::nullopt;
-  auto [data2, size] = *result;
+  auto res = then(tag("*"), number)(data);
 
-  auto result2 = crlf(data2);
-  if (!result2) return std::nullopt;
-  auto [data3, _] = *result2;
+  if (res) {
+    auto [data2, size] = *res;
 
-  std::vector<Element> array;
-  std::string_view data_out = data3;
-  array.reserve(size);
+    auto res = then(tag("-1"), crlf)(data);
+    if (res) {
+      auto [data, _] = *res;
 
-  for (size_t i = 0; i < size; i++) {
-    auto result3 = element(data_out);
-    if (!result3) return std::nullopt;
-    auto [data4, element] = std::move(*result3);
+      return result(data, Element::null_bulk_string());
+    }
 
-    array.push_back(std::move(element));
-    data_out = data4;
+    if (res = crlf(data2)) {
+      auto [data, _] = *res;
+
+      std::vector<Element> array;
+      array.reserve(size);
+
+      for (size_t i = 0; i < size; i++) {
+        auto res = element(data);
+
+        if (res) {
+          auto [new_data, element] = std::move(*res);
+
+          array.push_back(std::move(element));
+          data = new_data;
+
+        } else {
+          return std::nullopt;
+        }
+      }
+
+      return result(data, Element::array(std::move(array)));
+    }
   }
 
-  return std::make_optional(
-      std::make_pair(data_out, Element::array(std::move(array))));
+  return std::nullopt;
+}
+
+Result<Element> null(std::string_view data) {
+  auto res = then(tag("_"), crlf)(data);
+
+  if (res) {
+    auto [data, _] = *res;
+
+    return result(data, Element::null());
+  }
+
+  return std::nullopt;
 }
 
 Result<Element> element(std::string_view data) {
-  return alt(simple_string, bulk_string, array)(data);
+  return alt(simple_string, simple_error, integer, bulk_string, array,
+             null)(data);
 }
 
-Result<Command> parse_command(std::string_view data) { return std::nullopt; }
+Result<commands::Command> parse_command(std::string_view data) {
+  auto res = array(data);
+
+  if (res) {
+    auto [data, element] = std::move(*res);
+
+    try {
+      auto array = element.get_array();
+
+      if (!array.empty()) {
+        auto command_name = array[0].get_bulk_string();
+
+        if (command_name) {
+          auto command_name_is = [&](std::string_view rhs) {
+            auto lhs = command_name->view();
+            auto right = rhs.begin();
+
+            return lhs.length() == rhs.length() &&
+                   std::all_of(lhs.begin(), lhs.end(), [&](char left) {
+                     return std::toupper(left) == *(right++);
+                   });
+          };
+
+          if (command_name_is("PING")) {
+            if (array.size() > 1) {
+              auto arg = array[1].get_bulk_string();
+
+              return arg ? result(data, commands::Ping(std::move(*arg)))
+                         : result(data, commands::Ping());
+            } else {
+              return result(data, commands::Ping());
+            }
+
+          } else if (command_name_is("ECHO")) {
+            if (array.size() > 1) {
+              auto arg = array[1].get_bulk_string();
+
+              if (arg) {
+                return result(data, commands::Echo(std::move(*arg)));
+              }
+            }
+          }
+        }
+      }
+    } catch (std::bad_variant_access) {
+    }
+  }
+
+  return std::nullopt;
+}
 
 };  // namespace parsers
 
 void server_transact(buffer const &in, buffer &out, size_t &out_len) {
-  auto result = parsers::parse_command(in.begin());
-  if (!result) {
-    //
+  auto res = parsers::parse_command(in.begin());
+  if (res) {
+    auto [_, command] = std::move(*res);
   }
-  auto [_, command] = std::move(*result);
 }
 
 std::string client_parse(buffer const &in) { return ""; }
