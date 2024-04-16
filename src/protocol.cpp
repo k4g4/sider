@@ -11,85 +11,8 @@
 #include <variant>
 #include <vector>
 
-#define STRING_NEWTYPE(name)                                 \
-  struct name {                                              \
-    std::string inner;                                       \
-    /* remove ability to copy */                             \
-    name() = delete;                                         \
-    name(name &&other) = default;                            \
-    name(std::string &&string) : inner(std::move(string)) {} \
-    std::string_view view() const { return inner; }          \
-  }
-
-STRING_NEWTYPE(SimpleString);
-
-std::ostream &operator<<(std::ostream &os, SimpleString const &simple_string) {
-  return os << '+' << simple_string.view() << "\r\n";
-}
-
-STRING_NEWTYPE(SimpleError);
-
-std::ostream &operator<<(std::ostream &os, SimpleError const &simple_error) {
-  return os << '-' << simple_error.view() << "\r\n";
-}
-
-STRING_NEWTYPE(BulkString);
-
-std::ostream &operator<<(std::ostream &os, BulkString const &bulk_string) {
-  return os << '$' << bulk_string.view().length() << "\r\n"
-            << bulk_string.view() << "\r\n";
-}
-
-class Element {
-  using ElemVars = std::variant<SimpleString, SimpleError, int64_t,
-                                std::optional<BulkString>, std::vector<Element>,
-                                std::nullptr_t>;
-  ElemVars inner;
-
-  Element(ElemVars &&inner) : inner(std::move(inner)) {}
-
-  // only possible to construct element from factories that move values out
- public:
-  static Element simple_string(std::string &&string) {
-    return Element(ElemVars(SimpleString(std::move(string))));
-  }
-
-  static Element simple_error(std::string &&string) {
-    return Element(ElemVars(SimpleError(std::move(string))));
-  }
-
-  static Element null_bulk_string() { return Element(ElemVars(std::nullopt)); }
-
-  static Element bulk_string(std::string &&string) {
-    return Element(ElemVars(BulkString(std::move(string))));
-  }
-
-  static Element array(std::vector<Element> &&array) {
-    return Element(ElemVars(std::move(array)));
-  }
-
-  static Element integer(int64_t integer) { return Element(ElemVars(integer)); }
-
-  static Element null() { return Element(ElemVars(nullptr)); }
-
-  auto &&get_simple_string() {
-    return std::get<SimpleString>(std::move(inner));
-  }
-
-  auto &&get_simple_error() { return std::get<SimpleError>(std::move(inner)); }
-
-  auto &&get_bulk_string() {
-    return std::get<std::optional<BulkString>>(std::move(inner));
-  }
-
-  auto &&get_array() {
-    return std::get<std::vector<Element>>(std::move(inner));
-  }
-
-  auto get_integer() const { return std::get<int64_t>(inner); }
-
-  operator bool() const { return std::holds_alternative<nullptr_t>(inner); }
-};
+#include "elements.h"
+#include "storage.h"
 
 namespace commands {
 
@@ -98,7 +21,7 @@ struct Echo {
 
   Echo(BulkString &&msg) : msg(std::move(msg)) {}
 
-  void visit(std::ostream &os) const { os << msg; }
+  void visit(Storage &storage, std::ostream &os) { os << msg; }
 };
 
 struct Ping {
@@ -107,7 +30,7 @@ struct Ping {
   Ping() : msg(std::nullopt) {}
   Ping(BulkString &&msg) : msg(std::move(msg)) {}
 
-  void visit(std::ostream &os) const {
+  void visit(Storage &storage, std::ostream &os) {
     if (msg) {
       os << *msg;
     } else {
@@ -116,16 +39,41 @@ struct Ping {
   }
 };
 
-using Command = std::variant<Ping, Echo>;
+struct Set {
+  BulkString key;
+  BulkString value;
+
+  Set(BulkString &&key, BulkString &&value)
+      : key(std::move(key)), value(std::move(value)) {}
+
+  void visit(Storage &storage, std::ostream &os) {
+    if (storage.set(std::move(key), std::move(value))) {
+      os << SimpleString("OK");
+    } else {
+      os << std::optional<BulkString>();
+    }
+  }
+};
+
+struct Get {
+  BulkString key;
+
+  Get(BulkString &&key) : key(std::move(key)) {}
+
+  void visit(Storage &storage, std::ostream &os) { os << storage.get(key); }
+};
+
+using Command = std::variant<Ping, Echo, Set, Get>;
 
 struct Visitor {
   std::ostream &os;
+  Storage &storage;
 
-  Visitor(std::ostream &os) : os(os) {}
+  Visitor(std::ostream &os, Storage &storage) : os(os), storage(storage) {}
 
   template <typename Command>
-  void operator()(Command const &command) {
-    command.visit(os);
+  void operator()(Command &command) {
+    command.visit(storage, os);
   }
 };
 
@@ -198,7 +146,7 @@ auto then(Parser1 parser1, Parser2 parser2) {
 
 Result<size_t> number(std::string_view data) {
   auto end = std::find_if_not(data.begin(), data.end(),
-                              [](char c) { return c >= '0' && c <= '9'; });
+                              [](char c) { return c >= '0' and c <= '9'; });
   if (end != data.begin()) {
     size_t size = std::accumulate(data.begin(), end, 0, [](size_t acc, char c) {
       return acc * 10 + (c - '0');
@@ -395,14 +343,14 @@ Result<commands::Command> parse_command(std::string_view data) {
             auto lhs = command_name->view();
             auto right = rhs.begin();
 
-            return lhs.length() == rhs.length() &&
+            return lhs.length() == rhs.length() and
                    std::all_of(lhs.begin(), lhs.end(), [&](char left) {
                      return std::toupper(left) == *(right++);
                    });
           };
 
           if (command_name_is("PING")) {
-            if (array.size() > 1) {
+            if (array.size() >= 2) {
               auto arg = array[1].get_bulk_string();
 
               return arg ? result(data, commands::Ping(std::move(*arg)))
@@ -412,11 +360,30 @@ Result<commands::Command> parse_command(std::string_view data) {
             }
 
           } else if (command_name_is("ECHO")) {
-            if (array.size() > 1) {
+            if (array.size() >= 2) {
               auto arg = array[1].get_bulk_string();
 
               if (arg) {
                 return result(data, commands::Echo(std::move(*arg)));
+              }
+            }
+
+          } else if (command_name_is("SET")) {
+            if (array.size() >= 3) {
+              auto key = array[1].get_bulk_string();
+              auto value = array[2].get_bulk_string();
+
+              if (key and value) {
+                return result(
+                    data, commands::Set(std::move(*key), std::move(*value)));
+              }
+            }
+          } else if (command_name_is("GET")) {
+            if (array.size() >= 2) {
+              auto key = array[1].get_bulk_string();
+
+              if (key) {
+                return result(data, commands::Get(std::move(*key)));
               }
             }
           }
@@ -431,16 +398,20 @@ Result<commands::Command> parse_command(std::string_view data) {
 
 };  // namespace parsers
 
-void server_transact(buffer const &in, std::string &out) {
+void server_transact(Storage &storage, buffer const &in, std::string &out) {
   auto res = parsers::parse_command(in.begin());
   std::ostringstream oss(std::move(out), std::ios_base::trunc);
 
   if (res) {
-    auto [_, command] = std::move(*res);
-    commands::Visitor visitor(oss);
+    auto [data, command] = std::move(*res);
 
-    std::visit(visitor, command);
+    if (data.empty()) {
+      commands::Visitor visitor(oss, storage);
 
+      std::visit(visitor, command);
+    } else {
+      oss << SimpleError("server error");
+    }
   } else {
     oss << SimpleError("server error");
   }

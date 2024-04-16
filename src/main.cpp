@@ -7,12 +7,14 @@
 
 #include "protocol.h"
 #include "shared.h"
+#include "storage.h"
 
 const size_t BACKLOG = 10;
 
 class Server {
   int sock;
   sockaddr_in addr;
+  Storage storage;
 
  public:
   Server()
@@ -57,7 +59,7 @@ class Server {
 
     while (0 < read(client_sock, in.data(), in.size())) {
       std::cout << "read:\n" << in.data() << std::endl;
-      server_transact(in, out);
+      server_transact(storage, in, out);
       std::cout << "writing:\n" << out.data() << std::endl;
 
       if (0 > send(client_sock, out.data(), out.size(), 0)) {
