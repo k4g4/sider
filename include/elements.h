@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+// somehow, this method was easier for me than inheritance...
 #define STRING_NEWTYPE(name)                                                  \
   struct name {                                                               \
     std::string inner;                                                        \

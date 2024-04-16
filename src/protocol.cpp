@@ -405,13 +405,8 @@ void server_transact(Storage &storage, buffer const &in, std::string &out) {
   if (res) {
     auto [data, command] = std::move(*res);
 
-    if (data.empty()) {
-      commands::Visitor visitor(oss, storage);
-
-      std::visit(visitor, command);
-    } else {
-      oss << SimpleError("server error");
-    }
+    commands::Visitor visitor(oss, storage);
+    std::visit(visitor, command);
   } else {
     oss << SimpleError("server error");
   }
