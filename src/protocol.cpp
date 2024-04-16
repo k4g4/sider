@@ -42,12 +42,13 @@ struct Ping {
 struct Set {
   BulkString key;
   BulkString value;
+  std::optional<BulkString> px;
 
-  Set(BulkString &&key, BulkString &&value)
-      : key(std::move(key)), value(std::move(value)) {}
+  Set(BulkString &&key, BulkString &&value, std::optional<BulkString> &&px)
+      : key(std::move(key)), value(std::move(value)), px(std::move(px)) {}
 
   void visit(Storage &storage, std::ostream &os) {
-    if (storage.set(std::move(key), std::move(value))) {
+    if (storage.set(std::move(key), std::move(value), px)) {
       os << SimpleString("OK");
     } else {
       os << std::optional<BulkString>();
@@ -374,8 +375,13 @@ Result<commands::Command> parse_command(std::string_view data) {
               auto value = array[2].get_bulk_string();
 
               if (key and value) {
-                return result(
-                    data, commands::Set(std::move(*key), std::move(*value)));
+                if (array.size() >= 4) {
+                  //
+                } else {
+                  return result(
+                      data, commands::Set(std::move(*key), std::move(*value),
+                                          std::nullopt));
+                }
               }
             }
           } else if (command_name_is("GET")) {
