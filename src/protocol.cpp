@@ -340,14 +340,17 @@ Result<commands::Command> parse_command(std::string_view data) {
         auto command_name = array[0].get_bulk_string();
 
         if (command_name) {
-          auto command_name_is = [&](std::string_view rhs) {
-            auto lhs = command_name->view();
+          auto cmp = [](std::string_view lhs, std::string_view rhs) {
             auto right = rhs.begin();
 
             return lhs.length() == rhs.length() and
                    std::all_of(lhs.begin(), lhs.end(), [&](char left) {
                      return std::toupper(left) == *(right++);
                    });
+          };
+
+          auto command_name_is = [&](std::string_view rhs) {
+            return cmp(command_name->view(), rhs);
           };
 
           if (command_name_is("PING")) {
@@ -376,7 +379,19 @@ Result<commands::Command> parse_command(std::string_view data) {
 
               if (key and value) {
                 if (array.size() >= 4) {
-                  //
+                  auto px_label = array[3].get_bulk_string();
+
+                  if (px_label and cmp(px_label->view(), "PX")) {
+                    if (array.size() >= 5) {
+                      auto px = array[4].get_bulk_string();
+
+                      if (px) {
+                        return result(data, commands::Set(std::move(*key),
+                                                          std::move(*value),
+                                                          std::move(*px)));
+                      }
+                    }
+                  }
                 } else {
                   return result(
                       data, commands::Set(std::move(*key), std::move(*value),
