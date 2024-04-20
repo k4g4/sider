@@ -59,6 +59,7 @@ class Server {
 
     while (0 < read(client_sock, in.data(), in.size())) {
       std::cout << "read:\n" << in.data() << std::endl;
+      out.clear();
       server_transact(storage, in, out);
       std::cout << "writing:\n" << out.data() << std::endl;
 
