@@ -61,7 +61,11 @@ struct Get {
 
   Get(BulkString &&key) : key(std::move(key)) {}
 
-  void visit(Storage &storage, std::ostream &os) { os << storage.get(key); }
+  void visit(Storage &storage, std::ostream &os) {
+    auto res = storage.get(key);
+    std::cout << "result0\n" << res << std::endl;
+    os << res;
+  }
 };
 
 using Command = std::variant<Ping, Echo, Set, Get>;
