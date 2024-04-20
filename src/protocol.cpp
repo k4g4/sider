@@ -61,7 +61,11 @@ struct Get {
 
   Get(BulkString &&key) : key(std::move(key)) {}
 
-  void visit(Storage &storage, std::ostream &os) { os << storage.get(key); }
+  void visit(Storage &storage, std::ostream &os) {
+    auto res = storage.get(key);
+    std::cout << "result:\n" << res << "\n";
+    os << res;
+  }
 };
 
 using Command = std::variant<Ping, Echo, Set, Get>;
@@ -424,9 +428,9 @@ void server_transact(Storage &storage, buffer const &in, std::string &out) {
   std::ostringstream oss(std::move(out), std::ios_base::trunc);
 
   if (res) {
-    auto [data, command] = std::move(*res);
-
+    auto [_, command] = std::move(*res);
     commands::Visitor visitor(oss, storage);
+
     std::visit(visitor, command);
   } else {
     oss << SimpleError("server error");
